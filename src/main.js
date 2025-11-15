@@ -13,6 +13,11 @@ const sizes = {
     height: window.innerHeight,
 };
 
+// Raycaster
+const raycasterObjects = [];
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+
 // Scene
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x050509);
@@ -24,9 +29,11 @@ const camera = new THREE.PerspectiveCamera(
     0.1,
     1000
 );
-camera.position.set(-0.04307105681398,
+camera.position.set(
+    -0.04307105681398,
     0.426049991084538,
-    0.07353198720262494);
+    0.07353198720262494
+);
 scene.add(camera);
 
 // Renderer
@@ -50,13 +57,15 @@ scene.add(dirLight);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.05;
-controls.update();
-controls.target.set(1.086376205707433,
+controls.target.set(
+    1.086376205707433,
     1.1808734984911493,
-    1.5432228011158056)
+    1.5432228011158056
+);
+controls.update();
+
 // Loaders
 const textureLoader = new THREE.TextureLoader();
-
 const dracoLoader = new DRACOLoader();
 dracoLoader.setDecoderPath("/draco/");
 
@@ -64,25 +73,12 @@ const loader = new GLTFLoader();
 loader.setDRACOLoader(dracoLoader);
 
 // ---------------------------------------------------
-// ANDREW’S TEXTURE SYSTEM (EMPTY FOR NOW)
+// Andrew-style texture system (still empty)
 // ---------------------------------------------------
 
-// As you follow Andrew’s video, you will fill this with entries like:
-// Frame01: { day: "/textures/frame01_day.png", night: "/textures/frame01_night.png" }
-const textureMap = {
-    // Example:
-    // Panel01: {
-    //   day: "/textures/panel01_day.png",
-    //   night: "/textures/panel01_night.png"
-    // }
-};
+const textureMap = {};
+const loadedTextures = { day: {}, night: {} };
 
-const loadedTextures = {
-    day: {},
-    night: {},
-};
-
-// Load textures
 Object.entries(textureMap).forEach(([key, paths]) => {
     if (paths.day) {
         const dayTex = textureLoader.load(paths.day);
@@ -99,7 +95,32 @@ Object.entries(textureMap).forEach(([key, paths]) => {
 });
 
 // ---------------------------------------------------
-// LOAD THE ROOM MODEL
+// Mouse move for raycaster
+// ---------------------------------------------------
+
+window.addEventListener("mousemove", (e) => {
+    pointer.x = (e.clientX / window.innerWidth) * 2 - 1;
+    pointer.y = -(e.clientY / window.innerHeight) * 2 + 1;
+});
+
+// Helper: is this mesh inside any CHART_ collection?
+function isChartMesh(obj) {
+    let current = obj;
+    while (current) {
+        if (
+            current.name.includes("CHART_MY_WORK") ||
+            current.name.includes("CHART_ABOUT") ||
+            current.name.includes("CHART_CONTACT")
+        ) {
+            return true;
+        }
+        current = current.parent;
+    }
+    return false;
+}
+
+// ---------------------------------------------------
+// Load the room model
 // ---------------------------------------------------
 
 let room = null;
@@ -114,13 +135,22 @@ loader.load(
                 child.castShadow = true;
                 child.receiveShadow = true;
 
-                // Clone material so it's unique
+                // Only meshes that live under CHART_ groups are clickable
+                if (isChartMesh(child)) {
+                    // store original color once
+                    if (child.material && child.material.color && !child.userData.originalColor) {
+                        child.userData.originalColor = child.material.color.clone();
+                    }
+                    raycasterObjects.push(child);
+                }
+
+                // clone material so color changes don't affect shared materials
                 if (child.material && !child.material.isCloned) {
                     child.material = child.material.clone();
                     child.material.isCloned = true;
                 }
 
-                // Apply textures according to name
+                // Andrew's texture system (does nothing yet)
                 for (const key of Object.keys(textureMap)) {
                     if (child.name.includes(key)) {
                         const tex = loadedTextures.day[key];
@@ -135,21 +165,8 @@ loader.load(
 
         scene.add(room);
 
-        // Frame camera
-        const box = new THREE.Box3().setFromObject(room);
-        const center = box.getCenter(new THREE.Vector3());
-        const size = box.getSize(new THREE.Vector3());
-        const maxDim = Math.max(size.x, size.y, size.z);
-        const cameraZ = maxDim * 1.5;
-
-        camera.position.set(
-            center.x + cameraZ * 0.5,
-            center.y + cameraZ * 0.4,
-            center.z + cameraZ
-        );
-        camera.lookAt(center);
-        controls.target.copy(center);
-        controls.update();
+        console.log("Clickable meshes count:", raycasterObjects.length);
+        raycasterObjects.forEach((m) => console.log("Clickable:", m.name));
     },
     undefined,
     (error) => {
@@ -158,7 +175,7 @@ loader.load(
 );
 
 // ---------------------------------------------------
-// Test Cube (keep so you know render loop works)
+// Test cube
 // ---------------------------------------------------
 
 const geometry = new THREE.BoxGeometry(1, 1, 1);
@@ -193,16 +210,33 @@ const render = () => {
 
     cube.rotation.x += 0.01;
     cube.rotation.y += 0.01;
-
-    // Very subtle camera float
     camera.position.y += Math.sin(elapsed * 0.2) * 0.0005;
 
     controls.update();
 
-   // console.log(camera.position);
-   // console.log("00000000000000");
-    //console.log(controls.target);
+    // Raycast
+    raycaster.setFromCamera(pointer, camera);
+    const intersects = raycaster.intersectObjects(raycasterObjects, true);
+
+    // reset all clickable meshes to original color
+    raycasterObjects.forEach((obj) => {
+        if (obj.material && obj.material.color && obj.userData.originalColor) {
+            obj.material.color.copy(obj.userData.originalColor);
+        }
+    });
+
+    // highlight hovered ones
+    for (let i = 0; i < intersects.length; i++) {
+        const mesh = intersects[i].object;
+        if (mesh.material && mesh.material.color) {
+            mesh.material.color.set(0xff0000);
+        }
+    }
+
+    document.body.style.cursor = intersects.length > 0 ? "pointer" : "default";
+
     renderer.render(scene, camera);
     window.requestAnimationFrame(render);
 };
+
 render();
